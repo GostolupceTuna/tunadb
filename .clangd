@@ -1,3 +1,8 @@
 CompileFlags:
   CompilationDatabase: build/clangd
   Add: -Wno-unqualified-std-cast-call
+
+If:
+  PathMatch: "third_party/libpg_query/.*"
+Diagnostics:
+  Suppress: ["*"]
