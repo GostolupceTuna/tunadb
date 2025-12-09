@@ -1037,6 +1037,94 @@ values_clause_opt_comma:
 			| values_clause ','			{ $$ = $1; }
 		;
 
+/*****************************************************************************
+ *
+ *	MATCH_RECOGNIZE, lets all hope this ends well
+ *
+ *****************************************************************************/
+
+
+match_recognize_clause:
+			MATCH_RECOGNIZE '('
+				mr_partition_clause
+				mr_order_clause
+				mr_measures_clause
+				mr_rows_per_match_clause
+				mr_after_match_skip_clause
+				mr_opt_within_clause
+				mr_pattern_clause
+				mr_define_clause
+			')'
+				{
+					/* no-op for now; semantics to be added later */
+					$$ = nullptr;
+				}
+;
+
+mr_partition_clause:
+			PARTITION
+				{
+					$$ = nullptr;
+				}
+;
+
+mr_order_clause:
+			ORDER BY
+				{
+					$$ = nullptr;
+				}
+;
+
+mr_measures_clause:
+			MEASURES
+				{
+					$$ = nullptr;
+				}
+;
+
+mr_rows_per_match_clause:
+			ONE ROW PER MATCH
+				{
+					$$ = nullptr;
+				}
+;
+
+mr_after_match_skip_clause:
+			AFTER MATCH SKIP PAST LAST ROW
+				{
+					$$ = nullptr;
+				}
+			| AFTER MATCH SKIP TO NEXT ROW
+				{
+					$$ = nullptr;
+				}
+;
+
+mr_opt_within_clause:
+			WITHIN
+				{
+					$$ = nullptr;
+				}
+			| /* EMPTY */
+				{
+					$$ = nullptr;
+				}
+;
+
+mr_pattern_clause:
+			PATTERN
+				{
+					$$ = nullptr;
+				}
+;
+
+mr_define_clause:
+			DEFINE
+				{
+					$$ = nullptr;
+				}
+;
+
 
 /*****************************************************************************
  *
@@ -1184,6 +1272,7 @@ table_ref:	relation_expr opt_alias_clause opt_at_clause opt_tablesample_clause
 					n->location = @2;
 					$$ = (PGNode *) n;
 				}
+			| table_ref match_recognize_clause	{ $$ = $1; }
 		;
 
 opt_pivot_group_by:

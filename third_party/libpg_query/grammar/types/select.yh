@@ -132,3 +132,9 @@
 %type <node> pivot_value pivot_column_entry single_pivot_value unpivot_value
 %type <list> pivot_value_list pivot_column_list_internal pivot_column_list pivot_header opt_pivot_group_by unpivot_value_list
 %type <boolean> opt_include_nulls
+
+
+%type <node> match_recognize_clause
+%type <node> mr_partition_clause mr_order_clause mr_measures_clause
+%type <node> mr_rows_per_match_clause mr_after_match_skip_clause
+%type <node> mr_opt_within_clause mr_pattern_clause mr_define_clause
