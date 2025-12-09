@@ -498,6 +498,7 @@ typedef enum PGNodeTag {
 	T_PGPositionalReference,
 	T_PGMatchEntry,
 	T_PGMatchAction,
+	T_PGMatchRecognize,
 
 	/*
 	 * TAGS FOR REPLICATION GRAMMAR PARSE NODES (replnodes.h)

@@ -1045,40 +1045,55 @@ values_clause_opt_comma:
 
 
 match_recognize_clause:
-			MATCH_RECOGNIZE '('
-				mr_partition_clause
-				mr_order_clause
-				mr_measures_clause
-				mr_rows_per_match_clause
-				mr_after_match_skip_clause
-				mr_opt_within_clause
-				mr_pattern_clause
-				mr_define_clause
-			')'
-				{
-					/* no-op for now; semantics to be added later */
-					$$ = nullptr;
-				}
+    MATCH_RECOGNIZE '('
+        mr_opt_partition_clause
+        mr_order_clause
+        mr_measures_clause
+        mr_rows_per_match_clause
+        mr_after_match_skip_clause
+        mr_opt_within_clause
+        mr_pattern_clause
+        mr_define_clause
+    ')'
+    {
+        PGMatchRecognize *n = makeNode(PGMatchRecognize);
+
+        n->partition = (PGList *) $3;
+        n->order = (PGList *) $4;
+        n->measures = (PGList *) $5;
+        n->one_row_per_match = false;
+        n->skip_to_next_row = false;
+        n->skip_past_last_row = false;
+        n->within = nullptr;
+        n->pattern = nullptr;
+        n->define = nullptr;
+
+        $$ = (PGNode *) n;
+    }
 ;
 
-mr_partition_clause:
-			PARTITION
+mr_opt_partition_clause:
+			PARTITION BY expr_list
 				{
-					$$ = nullptr;
+					$$ = $3;		/* list of expressions/columns */
+				}
+			| /* EMPTY */
+				{
+					$$ = NIL;		/* empty list */
 				}
 ;
 
 mr_order_clause:
-			ORDER BY
+			ORDER BY sortby			
 				{
-					$$ = nullptr;
+					$$ = list_make1($3);	/* exactly one expression allowed */
 				}
 ;
 
 mr_measures_clause:
-			MEASURES
+			MEASURES target_list
 				{
-					$$ = nullptr;
+					$$ = $2;		/* list of measures */
 				}
 ;
 
@@ -1272,7 +1287,12 @@ table_ref:	relation_expr opt_alias_clause opt_at_clause opt_tablesample_clause
 					n->location = @2;
 					$$ = (PGNode *) n;
 				}
-			| table_ref match_recognize_clause	{ $$ = $1; }
+			| table_ref match_recognize_clause
+				{ 
+					PGMatchRecognize *mr = (PGMatchRecognize *) $2;
+        			mr->table_ref = $1;
+					$$ = $1;
+				}
 		;
 
 opt_pivot_group_by:
@@ -3356,7 +3376,7 @@ opt_existing_window_name: ColId						{ $$ = $1; }
 			| /*EMPTY*/				%prec Op		{ $$ = NULL; }
 		;
 
-opt_partition_clause: PARTITION BY expr_list		{ $$ = $3; }
+opt_partition_clause: PARTITION BY expr_list		{ $$ = $3; }		/* maybe just use this??? */
 			| /*EMPTY*/								{ $$ = NIL; }
 		;
 

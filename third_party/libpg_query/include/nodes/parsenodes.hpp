@@ -515,6 +515,27 @@ typedef struct PGRangeFunction {
 	PGNode *sample;   /* sample options (if any) */
 } PGRangeFunction;
 
+
+/* --------------------------------- MATCH_RECOGNIZE STRUCT -------------------------------------- */
+
+
+typedef struct PGMatchRecognize {
+	PGNodeTag type;
+	PGNode      *table_ref;      
+    PGList      *partition;
+    PGList      *order;
+    PGList      *measures;
+	bool		one_row_per_match;
+	bool 		skip_to_next_row;		// mutually exclusive with skip_past_last_row
+	bool		skip_past_last_row; 	// redundant but kept for clarity
+	PGNode		*within;
+    PGNode      *pattern;
+    PGList      *define;
+} PGMatchRecognize;
+
+
+
+
 /* Category of the column */
 typedef enum ColumnCategory {
 	COL_STANDARD,	/* regular column */

@@ -135,6 +135,8 @@
 
 
 %type <node> match_recognize_clause
-%type <node> mr_partition_clause mr_order_clause mr_measures_clause
+%type <list> mr_opt_partition_clause
+%type <list> mr_order_clause
+%type <list> mr_measures_clause
 %type <node> mr_rows_per_match_clause mr_after_match_skip_clause
 %type <node> mr_opt_within_clause mr_pattern_clause mr_define_clause
