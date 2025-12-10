@@ -1073,22 +1073,27 @@ match_recognize_clause:
 ;
 
 mr_opt_partition_clause:
-			PARTITION BY expr_list
-				{
-					$$ = $3;		/* list of expressions/columns */
-				}
-			| /* EMPTY */
-				{
-					$$ = NIL;		/* empty list */
-				}
+			opt_partition_clause {$$ = $1}	/* use the built-in partition clause */
 ;
 
 mr_order_clause:
-			ORDER BY sortby			
+			ORDER BY mr_sortby			
 				{
 					$$ = list_make1($3);	/* exactly one expression allowed */
 				}
 ;
+
+mr_sortby:	
+			a_expr
+				{
+					$$ = makeNode(PGSortBy);
+					$$->node = $1;
+					$$->sortby_dir = PG_SORTBY_ASC;
+					$$->sortby_nulls = PG_SORTBY_NULLS_DEFAULT;
+					$$->useOp = NIL;
+					$$->location = -1;		/* no operator */
+				}
+		;
 
 mr_measures_clause:
 			MEASURES target_list
