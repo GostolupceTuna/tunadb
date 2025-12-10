@@ -1061,7 +1061,7 @@ match_recognize_clause:
         n->partition = (PGList *) $3;
         n->order = (PGList *) $4;
         n->measures = (PGList *) $5;
-        n->one_row_per_match = false;
+        n->one_row_per_match = $6;
         n->skip_to_next_row = false;
         n->skip_past_last_row = false;
         n->within = nullptr;
@@ -1105,7 +1105,11 @@ mr_measures_clause:
 mr_rows_per_match_clause:
 			ONE ROW PER MATCH
 				{
-					$$ = nullptr;
+					$$ = true;
+				}
+			| ALL ROWS PER MATCH
+				{
+					$$ = false;
 				}
 ;
 

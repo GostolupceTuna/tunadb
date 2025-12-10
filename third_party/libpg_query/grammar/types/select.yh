@@ -139,5 +139,6 @@
 %type <list> mr_order_clause
 %type <list> mr_measures_clause
 %type <sortby> mr_sortby
-%type <node> mr_rows_per_match_clause mr_after_match_skip_clause
+%type <boolean> mr_rows_per_match_clause 
+%type <node> mr_after_match_skip_clause
 %type <node> mr_opt_within_clause mr_pattern_clause mr_define_clause
