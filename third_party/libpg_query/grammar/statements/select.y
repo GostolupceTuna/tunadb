@@ -1062,8 +1062,8 @@ match_recognize_clause:
         n->order = (PGList *) $4;
         n->measures = (PGList *) $5;
         n->one_row_per_match = $6;
-        n->skip_to_next_row = false;
-        n->skip_past_last_row = false;
+        n->skip_to_next_row = $7;
+		n->skip_past_last_row = !$7;
         n->within = nullptr;
         n->pattern = nullptr;
         n->define = nullptr;
@@ -1114,15 +1114,15 @@ mr_rows_per_match_clause:
 ;
 
 mr_after_match_skip_clause:
-			AFTER MATCH SKIP PAST LAST ROW
+			AFTER MATCH SKIP mr_skip_option
 				{
-					$$ = nullptr;
-				}
-			| AFTER MATCH SKIP TO NEXT ROW
-				{
-					$$ = nullptr;
+					$$ = $2;
 				}
 ;
+
+mr_skip_option:
+			TO NEXT ROW { $$ = true }
+			| PAST LAST_P ROW { $$ = false }
 
 mr_opt_within_clause:
 			WITHIN
