@@ -21,6 +21,7 @@
  */
 #pragma once
 
+#include "nodes.hpp"
 #include "nodes/bitmapset.hpp"
 #include "nodes/lockoptions.hpp"
 #include "nodes/primnodes.hpp"

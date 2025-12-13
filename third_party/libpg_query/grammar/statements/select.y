@@ -1061,9 +1061,11 @@ match_recognize_clause:
         n->partition = (PGList *) $3;
         n->order = (PGList *) $4;
         n->measures = (PGList *) $5;
-        n->one_row_per_match = $6;
-        n->skip_to_next_row = $7;
-		n->skip_past_last_row = !$7;
+        n->one_row_per_match = (bool) $6;
+        n->skip_to_next_row = (bool) $7;
+		n->skip_past_last_row = (bool) !$7;
+
+		/* TODO: GRM4, GRM5, TW1 */
         n->within = nullptr;
         n->pattern = nullptr;
         n->define = nullptr;
@@ -1096,9 +1098,16 @@ mr_sortby:
 		;
 
 mr_measures_clause:
-			MEASURES target_list
+			MEASURES mr_measure_list
 				{
-					$$ = $2;		/* list of measures */
+					$$ = $2;		
+				}
+;
+
+/* change here for GRM5 */
+mr_measure_list:
+				{
+					$$ = nullptr;
 				}
 ;
 
@@ -1122,9 +1131,11 @@ mr_after_match_skip_clause:
 
 mr_skip_option:
 			TO NEXT ROW { $$ = true }
-			| PAST LAST_P ROW { $$ = false }
+			| PAST LAST_P ROW { $$ = false }	/* "LAST" is read as "LAST_P" smh, look at kwlist.hpp
 
-mr_opt_within_clause:
+
+/* change here for TW1 */
+mr_opt_within_clause:				
 			WITHIN
 				{
 					$$ = nullptr;
@@ -1136,19 +1147,32 @@ mr_opt_within_clause:
 ;
 
 mr_pattern_clause:
-			PATTERN
+			PATTERN '(' mr_regex ')'
+				{
+					$$ = $3;
+				}
+;
+
+/* change here for GRM4 */
+mr_regex:							
 				{
 					$$ = nullptr;
 				}
 ;
 
+/* change here for GRM5 */
 mr_define_clause:
-			DEFINE
+			DEFINE  target_list		
+				{
+					$$ = $2;
+				}
+;
+
+mr_define_list:
 				{
 					$$ = nullptr;
 				}
 ;
-
 
 /*****************************************************************************
  *
