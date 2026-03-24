@@ -161,6 +161,8 @@ string PhysicalOperatorToString(PhysicalOperatorType type) {
 		return "EXTENSION";
 	case PhysicalOperatorType::PIVOT:
 		return "PIVOT";
+	case PhysicalOperatorType::MATCH_RECOGNIZE:
+		return "MATCH_RECOGNIZE";
 	case PhysicalOperatorType::COPY_DATABASE:
 		return "COPY_DATABASE";
 	case PhysicalOperatorType::VERIFY_VECTOR:

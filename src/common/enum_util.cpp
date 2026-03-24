@@ -3492,6 +3492,7 @@ const StringUtil::EnumStringLiteral *GetPhysicalOperatorTypeValues() {
 		{ static_cast<uint32_t>(PhysicalOperatorType::STREAMING_SAMPLE), "STREAMING_SAMPLE" },
 		{ static_cast<uint32_t>(PhysicalOperatorType::STREAMING_WINDOW), "STREAMING_WINDOW" },
 		{ static_cast<uint32_t>(PhysicalOperatorType::PIVOT), "PIVOT" },
+		{ static_cast<uint32_t>(PhysicalOperatorType::MATCH_RECOGNIZE), "MATCH_RECOGNIZE" },
 		{ static_cast<uint32_t>(PhysicalOperatorType::COPY_DATABASE), "COPY_DATABASE" },
 		{ static_cast<uint32_t>(PhysicalOperatorType::TABLE_SCAN), "TABLE_SCAN" },
 		{ static_cast<uint32_t>(PhysicalOperatorType::DUMMY_SCAN), "DUMMY_SCAN" },
@@ -3560,12 +3561,12 @@ const StringUtil::EnumStringLiteral *GetPhysicalOperatorTypeValues() {
 
 template<>
 const char* EnumUtil::ToChars<PhysicalOperatorType>(PhysicalOperatorType value) {
-	return StringUtil::EnumToString(GetPhysicalOperatorTypeValues(), 82, "PhysicalOperatorType", static_cast<uint32_t>(value));
+	return StringUtil::EnumToString(GetPhysicalOperatorTypeValues(), 83, "PhysicalOperatorType", static_cast<uint32_t>(value));
 }
 
 template<>
 PhysicalOperatorType EnumUtil::FromString<PhysicalOperatorType>(const char *value) {
-	return static_cast<PhysicalOperatorType>(StringUtil::StringToEnum(GetPhysicalOperatorTypeValues(), 82, "PhysicalOperatorType", value));
+	return static_cast<PhysicalOperatorType>(StringUtil::StringToEnum(GetPhysicalOperatorTypeValues(), 83, "PhysicalOperatorType", value));
 }
 
 const StringUtil::EnumStringLiteral *GetPhysicalTableScanExecutionStrategyValues() {
