@@ -4,16 +4,19 @@
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/operator/logical_match_recognize.hpp"
 
 namespace duckdb {
 
-// Look up the type of a source column by name
+// Look up the type and index of a source column by name
 LogicalType LookupSourceColumnType(const string &col_name,
                                    const vector<string> &source_columns,
-                                   const vector<LogicalType> &source_types) {
+                                   const vector<LogicalType> &source_types,
+                                   idx_t &out_index) {
     for (idx_t i = 0; i < source_columns.size(); i++) {
         if (StringUtil::CIEquals(source_columns[i], col_name)) {
+            out_index = i;
             return source_types[i];
         }
     }
@@ -61,10 +64,10 @@ unordered_set<string> ExtractPatternVars(string pattern) {
 // If a node is a two-part column reference like A.val where A is a pattern
 // variable and val is a source column, strip the variable prefix so it becomes
 // just val (which the binder can resolve against the source table).
-void ValidateAndRewriteVarCol(unique_ptr<ParsedExpression> &expr, const unordered_set<string> &pattern_vars, const vector<string> &source_columns) {
+void ValidateAndRewriteVarCol(unique_ptr<ParsedExpression> &expr, const unordered_set<string> &pattern_vars) {
     // first recurse into all children
     ParsedExpressionIterator::EnumerateChildren(*expr, [&](unique_ptr<ParsedExpression> &child) {
-        ValidateAndRewriteVarCol(child, pattern_vars, source_columns);
+        ValidateAndRewriteVarCol(child, pattern_vars);
     });
 
     // then look for var.col expressions
@@ -74,22 +77,10 @@ void ValidateAndRewriteVarCol(unique_ptr<ParsedExpression> &expr, const unordere
         if (col_ref.column_names.size() == 2) {
             const auto &var_name = col_ref.column_names[0];
             const auto &col_name = col_ref.column_names[1];
-        
+
             // Validate that var_name is valid PATTERN variable 
             if (!pattern_vars.count(var_name)) {
                 throw BinderException("Unknown pattern variable '%s' in expression", var_name);
-            }
-
-            // Validate that the column exists in the source table
-            bool found = false;
-            for (const auto &src_col : source_columns) {
-                if (StringUtil::CIEquals(src_col, col_name)) {
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) {
-                throw BinderException("Column '%s' referenced in '%s.%s' does not exist in source table", col_name, var_name, col_name);
             }
 
             // Replace A.val with just val
@@ -170,7 +161,7 @@ BoundStatement Binder::Bind(MatchRecognizeRef &ref) {
         }
 
         // validate and rewrite references like 'var.col' (e.g. A.val → val)  before binding
-        ValidateAndRewriteVarCol(define.condition, pattern_vars, result.child.names);
+        ValidateAndRewriteVarCol(define.condition, pattern_vars);
 
         // validate and rewrite PREV(col) → col before binding
         ValidateAndRewritePrev(define.condition);
@@ -247,14 +238,23 @@ BoundStatement Binder::Bind(MatchRecognizeRef &ref) {
                                   var_name, expr->ToString());
         }
 
-        // look up input column type from source schema
-        LogicalType input_type = LookupSourceColumnType(col_name, result.child.names, result.child.types);
+        // resolve column type and index
+        unique_ptr<ParsedExpression> col_ref_parsed = make_uniq<ColumnRefExpression>(col_name);
+        unique_ptr<Expression> bound_col;
+        try {
+            bound_col = expr_binder.Bind(col_ref_parsed);
+        } catch (const Exception &ex) {
+            throw BinderException("MEASURES: column '%s' does not exist in source table: %s", col_name, ex.what());
+        }
+        auto &bound_ref = bound_col->Cast<BoundColumnRefExpression>();
+        idx_t col_idx = bound_ref.binding.column_index;
+        LogicalType input_type = bound_ref.return_type;
 
         // determine output type
         LogicalType output_type = func_name.empty() ? input_type : GetMeasureOutputType(func_name, input_type);
 
         result.bound_mr.measures.emplace_back(func_name, var_name, col_name,
-                                     input_type, measure.alias, output_type);
+                                     input_type, measure.alias, output_type, col_idx);
     }
 
     // build output schema from MEASURES columns

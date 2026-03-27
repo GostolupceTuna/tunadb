@@ -159,6 +159,7 @@ void BoundMeasure::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<LogicalType>(203, "input_type", input_type);
 	serializer.WritePropertyWithDefault<string>(204, "output_name", output_name);
 	serializer.WriteProperty<LogicalType>(205, "output_type", output_type);
+	serializer.WritePropertyWithDefault<idx_t>(206, "input_column_index", input_column_index);
 }
 
 BoundMeasure BoundMeasure::Deserialize(Deserializer &deserializer) {
@@ -169,6 +170,7 @@ BoundMeasure BoundMeasure::Deserialize(Deserializer &deserializer) {
 	auto output_name = deserializer.ReadPropertyWithDefault<string>(204, "output_name");
 	auto output_type = deserializer.ReadProperty<LogicalType>(205, "output_type");
 	BoundMeasure result(std::move(function_name), std::move(pattern_variable), std::move(input_column), std::move(input_type), std::move(output_name), std::move(output_type));
+	deserializer.ReadPropertyWithDefault<idx_t>(206, "input_column_index", result.input_column_index);
 	return result;
 }
 

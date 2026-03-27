@@ -1,12 +1,19 @@
 #include "duckdb/execution/operator/match_recognize/physical_match_recognize.hpp"
+#include "duckdb/execution/operator/match_recognize/mr_nfa.hpp"
 
 #include "duckdb/common/sorting/sort_strategy.hpp"
 #include "duckdb/common/sorting/sort_key.hpp"
 #include "duckdb/common/sorting/sorted_run.hpp"
 #include "duckdb/common/types/row/block_iterator.hpp"
+#include "duckdb/common/types/column/column_data_collection.hpp"
+#include "duckdb/execution/expression_executor.hpp"
+#include "duckdb/planner/expression/bound_reference_expression.hpp"
 
 namespace duckdb {
 
+//===--------------------------------------------------------------------===//
+// Tie detection 
+//===--------------------------------------------------------------------===//
 // inspo: TemplatedScan() in physical_asof_join.cpp
 template <SortKeyType SORT_KEY_TYPE>
 static void DetectTiesTemplated(const SortedRun &sorted_run) {
@@ -59,7 +66,10 @@ static void DetectTies(const SortedRun &sorted_run) {
     }
 }
 
-//	Global sink state
+//===--------------------------------------------------------------------===//
+// Sink States
+//===--------------------------------------------------------------------===//
+// Global Sink State
 class MatchRecognizeGlobalSinkState : public GlobalSinkState {
 public:
 	MatchRecognizeGlobalSinkState(const PhysicalMatchRecognize &op, ClientContext &context)
@@ -101,7 +111,9 @@ public:
 	unique_ptr<LocalSinkState> local_group;
 };
 
-// this implements a sorted match recognize functions variant
+//===--------------------------------------------------------------------===//
+// Constructor: this implements a sorted match recognize functions variant
+//===--------------------------------------------------------------------===//
 PhysicalMatchRecognize::PhysicalMatchRecognize(PhysicalPlan &physical_plan, BoundMatchRecognizeInfo bound_mr,
                                                idx_t estimated_cardinality)
     : PhysicalOperator(physical_plan, PhysicalOperatorType::MATCH_RECOGNIZE, bound_mr.types, estimated_cardinality),
@@ -181,7 +193,7 @@ struct MatchRecognizeHashGroup {
 class MatchRecognizeGlobalSourceState : public GlobalSourceState {
 public:
 	MatchRecognizeGlobalSourceState(ClientContext &client, MatchRecognizeGlobalSinkState &gsink)
-		: next_group(0) {
+		: next_group(0), initialized(false) {
 		auto &sort_strategy = *gsink.sort_strategy;
 		hashed_source = sort_strategy.GetGlobalSourceState(client, *gsink.strategy_sink);
 		auto &hash_groups = sort_strategy.GetHashGroups(*hashed_source);
@@ -204,6 +216,12 @@ public:
     vector<unique_ptr<MatchRecognizeHashGroup>> match_recognize_hash_groups;
     //! Index of the next partition to process
 	atomic<idx_t> next_group;
+	//! Whether all partitions have been processed into results
+	bool initialized;
+	//! Pre-computed output rows
+	unique_ptr<ColumnDataCollection> results;
+	//! Scan cursor for results
+	ColumnDataScanState scan_state;
 };
 
 // Per-thread scan state
@@ -228,6 +246,9 @@ unique_ptr<GlobalSourceState> PhysicalMatchRecognize::GetGlobalSourceState(Clien
 	return make_uniq<MatchRecognizeGlobalSourceState>(client, gsink);
 }
 
+//===--------------------------------------------------------------------===//
+// GetDataInternal
+//===--------------------------------------------------------------------===//
 //! Produce the next output chunk.
 //! Iterates over sorted partitions, runs NFA pattern matching per partition,
 //! computes MEASURES, and emits rows according to ONE ROW / ALL ROWS PER MATCH.
@@ -236,42 +257,93 @@ SourceResultType PhysicalMatchRecognize::GetDataInternal(ExecutionContext &conte
     auto &gsource = source.global_state.Cast<MatchRecognizeGlobalSourceState>();
 	auto &gsink = sink_state->Cast<MatchRecognizeGlobalSinkState>();
     auto &sort_strategy = *gsink.sort_strategy;
+	auto &client = gsink.client;
+	auto &bound_mr = this->bound_mr;
+	
+	auto &lsource = source.local_state.Cast<MatchRecognizeLocalSourceState>();
+	if (!lsource.local_source) {
+		lsource.local_source = sort_strategy.GetLocalSourceState(context, *gsource.hashed_source);
+	}
 
-    // Iterate over partitions
-	while (gsource.next_group < gsource.match_recognize_hash_groups.size()) {
-		auto &mr_group = gsource.match_recognize_hash_groups[gsource.next_group];
-        if (!mr_group) {
-            ++gsource.next_group;
-            continue;
-        }
-        const idx_t group_idx = mr_group->hash_bin;
+	// Process all partitions on the first call and buffer results
+	if (!gsource.initialized) {
+		gsource.results = make_uniq<ColumnDataCollection>(client, bound_mr.types);
+		// Iterate over partitions
+		while (gsource.next_group < gsource.match_recognize_hash_groups.size()) {
+			auto &mr_group = gsource.match_recognize_hash_groups[gsource.next_group];
+			if (!mr_group) {
+				++gsource.next_group;
+				continue;
+			}
+			const idx_t group_idx = mr_group->hash_bin;
 
-        // Materialize the sorted run for this partition
-        auto unused = make_uniq<LocalSourceState>();
-        OperatorSourceInput hsource {*gsource.hashed_source, *unused, source.interrupt_state};
+			// sort partition data into the inner sort
+			OperatorSinkFinalizeInput finalize_input {*gsink.strategy_sink, source.interrupt_state};
+			sort_strategy.SortColumnData(context, group_idx, finalize_input);
 
-        sort_strategy.MaterializeSortedRun(context, group_idx, hsource);
+			// materialize the sorted run
+			OperatorSourceInput hsource {*gsource.hashed_source, *lsource.local_source, source.interrupt_state};
+			sort_strategy.MaterializeSortedRun(context, group_idx, hsource);
+			auto sorted_run = sort_strategy.GetSortedRun(context.client, group_idx, hsource);
 
-        // Get the sorted run
-		auto sorted_run = sort_strategy.GetSortedRun(context.client, group_idx, hsource);
+			if (!sorted_run || sorted_run->Count() == 0) {
+				++gsource.next_group;
+				continue;
+			}
 
-        // Tie detection for ORDER BY
-		if (sorted_run && sorted_run->Count() > 1 && !mr_group->ties_checked) {
-			DetectTies(*sorted_run);
-			mr_group->ties_checked = true;
+			// Tie detection for ORDER BY
+			if (!mr_group->ties_checked) {
+				DetectTies(*sorted_run);
+				mr_group->ties_checked = true;
+			}
+
+			idx_t num_rows = sorted_run->Count();
+
+			// TODO PHY1: replace all-true masks with EvaluateDefines(bound_mr.defines, ...)
+			// For now: every row satisfies every variable
+			unordered_map<string, vector<bool>> var_masks;
+			for (auto &define : bound_mr.defines) {
+				var_masks[define.variable_name] = vector<bool>(num_rows, true);
+			}
+
+			// Run NFA matching
+			auto matches = MRRunPatternMatching(bound_mr.pattern, num_rows, var_masks, bound_mr.skip_to_next_row);
+
+			// TODO PHY1: replace NULLs with ComputeMeasure(...)
+			// For now: one NULL row per match so we can count / verify match count
+			for (auto &match : matches) {
+				DataChunk output_chunk;
+				output_chunk.Initialize(Allocator::DefaultAllocator(), bound_mr.types);
+				output_chunk.SetCardinality(1);
+				for (idx_t m = 0; m < bound_mr.measures.size(); m++) {
+					output_chunk.SetValue(m, 0, Value(bound_mr.types[m])); // NULL placeholder
+				}
+				gsource.results->Append(output_chunk);
+			}
+
+			// TODO: Compute bound_mr.measures
+			// TODO: Emit rows according to bound_mr.one_row_per_match
+
+			++gsource.next_group;
 		}
+		gsource.results->InitializeScan(gsource.scan_state);
+		gsource.initialized = true;
+	}
 
-		// TODO: Run NFA matching
-		// TODO: Compute bound_mr.measures
-		// TODO: Emit rows according to bound_mr.one_row_per_match
-		// TODO: Apply skip logic
+	if (!gsource.results || gsource.results->Count() == 0) {
+		return SourceResultType::FINISHED;
+	}
 
-        ++gsource.next_group;
-    }
+	if (gsource.results->Scan(gsource.scan_state, chunk)) {
+		return SourceResultType::HAVE_MORE_OUTPUT;
+	}
 	
 	return SourceResultType::FINISHED;
 }
 
+//===--------------------------------------------------------------------===//
+// ParamsToString
+//===--------------------------------------------------------------------===//
 InsertionOrderPreservingMap<string> PhysicalMatchRecognize::ParamsToString() const {
 	InsertionOrderPreservingMap<string> result;
 	result["pattern"] = bound_mr.pattern;

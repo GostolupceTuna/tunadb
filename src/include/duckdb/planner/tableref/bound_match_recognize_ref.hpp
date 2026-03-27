@@ -57,13 +57,16 @@ struct BoundMeasure {
 	string output_name;
 	//! The output type (COUNT→BIGINT, SUM/AVG→DOUBLE, FIRST/LAST/MIN/MAX→input type)
 	LogicalType output_type;
+	//! The physical column index in the input partition
+	idx_t input_column_index = 0;
 
 	BoundMeasure() = default;
 	BoundMeasure(string function_name, string pattern_variable, string input_column,
-	             LogicalType input_type, string output_name, LogicalType output_type)
+	             LogicalType input_type, string output_name, LogicalType output_type, idx_t input_column_index = 0)
 	    : function_name(std::move(function_name)), pattern_variable(std::move(pattern_variable)),
 	      input_column(std::move(input_column)), input_type(std::move(input_type)),
-	      output_name(std::move(output_name)), output_type(std::move(output_type)) {
+	      output_name(std::move(output_name)), output_type(std::move(output_type)),
+		  input_column_index(input_column_index) {
 	}
 
 	// default copy is fine

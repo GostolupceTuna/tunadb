@@ -436,6 +436,10 @@
     { "id": 205, 
       "name": "output_type", 
       "type": "LogicalType" 
+    },
+    { "id": 206,
+      "name": "input_column_index",
+      "type": "idx_t"
     }
   ],
   "constructor": ["function_name", "pattern_variable", "input_column", "input_type", "output_name", "output_type"]

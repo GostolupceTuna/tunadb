@@ -208,6 +208,19 @@ void LogicalOperatorVisitor::EnumerateExpressions(LogicalOperator &op,
 		}
 		break;
 	}
+	case LogicalOperatorType::LOGICAL_MATCH_RECOGNIZE: {
+		auto &mr = op.Cast<LogicalMatchRecognize>();
+		for (auto &expr : mr.bound_mr.partition_by) {
+			callback(&expr);
+		}
+		for (auto &order : mr.bound_mr.order_by) {
+			callback(&order.expression);
+		}
+		for (auto &define : mr.bound_mr.defines) {
+			callback(&define.condition);
+		}
+		break;
+	}
 	default:
 		break;
 	}
