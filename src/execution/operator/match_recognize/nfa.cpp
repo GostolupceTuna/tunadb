@@ -7,6 +7,9 @@
 #define SHINY_GREEN "\033[1;38;2;0;255;0m"
 #define RESET_COLOR "\033[0m"
 
+// default: off
+bool nfa_output_enabled = false;
+
 
 Transition::Transition()
     : type(TransitionType::NONE), to(-1), var(0), guard(GuardFn()) {}
@@ -228,13 +231,14 @@ void print_transition(const Transition &trans) {
 }
 
 void NFA::print() const {
+    if (!nfa_output_enabled) return;
     std::cout << "Start state: " << start << "\n";
     std::cout << "Accept state: " << accept << "\n";
 
     for (const auto &state : states) {
         if (state.out1.type != TransitionType::NONE || state.out2.type != TransitionType::NONE) {
             std::cout << "State " << state.id << ": ";
-            
+
             if (state.out1.type != TransitionType::NONE) {
                 print_transition(state.out1);
             }
@@ -244,7 +248,7 @@ void NFA::print() const {
                 print_transition(state.out2);
             }
             std::cout << "\n";
-        } 
+        }
     }
 }
 
@@ -316,6 +320,7 @@ void Simulation::epsilon_closure(std::vector<Run> &currentRuns) {
 }
 
 void Simulation::print_run(const Run &run) {
+    if (!nfa_output_enabled) return;
     if (run.bindings.size()  == 0) {
         std::cout << "Run: state=" << run.state << ", bindings=[]\n";
     } else {
@@ -331,6 +336,7 @@ void Simulation::print_run(const Run &run) {
 }
 
 void Simulation::print_results(bool match) {
+    if (!nfa_output_enabled) return;
     if (!match) {
         std::cout << "\n" << SHINY_RED << "=== EMPTY ===" << RESET_COLOR <<"\n\n";
     } else {
@@ -350,7 +356,7 @@ void Simulation::print_results(bool match) {
 
 bool Simulation::run(int start_row, int num_rows){
     for (int row_idx = start_row; row_idx < num_rows; row_idx++) {
-        std::cout << "\nROW " << row_idx << ":\n";
+        if (nfa_output_enabled) std::cout << "\nROW " << row_idx << ":\n";
 
         std::vector<Run> nextRuns;
 
@@ -361,26 +367,26 @@ bool Simulation::run(int start_row, int num_rows){
             const State &state = nfa.states[static_cast<size_t>(id)];
 
             if (run.state == nfa.accept) {
-                accRuns.push_back(run);  
-                continue;                 
+                accRuns.push_back(run);
+                continue;
             }
 
             if (state.out1.type == TransitionType::VAR) {
                 if (state.out1.guard(run.bindings, row_idx)) {
-                    std::cout << state.out1.var << " -> " << state.out1.to << " accepted\n";
+                    if (nfa_output_enabled) std::cout << state.out1.var << " -> " << state.out1.to << " accepted\n";
 
                     run.state = state.out1.to;
 
                     matchedVar matchedVar;
                     matchedVar.var = state.out1.var;
-                    matchedVar.row_idx = row_idx; 
+                    matchedVar.row_idx = row_idx;
                     run.bindings.push_back(matchedVar);
 
-                    nextRuns.push_back(run); 
+                    nextRuns.push_back(run);
                 } else {
-                    std::cout << state.out1.var << " -> " << state.out1.to << " rejected\n";
+                    if (nfa_output_enabled) std::cout << state.out1.var << " -> " << state.out1.to << " rejected\n";
                 }
-            } 
+            }
         }
         epsilon_closure(nextRuns);
         currentRuns = std::move(nextRuns);

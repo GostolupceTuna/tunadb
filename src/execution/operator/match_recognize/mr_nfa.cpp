@@ -47,7 +47,7 @@ vector<MRMatchResult> MRRunPatternMatching(const string &pattern, idx_t num_rows
 	int end_pos = static_cast<int>(num_rows);
 
 	while (start_pos < end_pos) {
-		std::cout << SHINY_CYAN << "Starting from ROW " << start_pos << RESET_COLOR << "\n";
+		if (nfa_output_enabled) std::cout << SHINY_CYAN << "Starting from ROW " << start_pos << RESET_COLOR << "\n";
 		Simulation sim(nfa);
 		const Run *longest_match = sim.find_matches(sim, start_pos, end_pos, skip_to_next_row);
 		if (!longest_match) {
