@@ -17,7 +17,7 @@
 #include <cctype>
 
 // NFA debug output toggle (defined in nfa.cpp, outside any namespace)
-extern bool g_nfa_output_enabled;
+extern bool nfa_output_enabled;
 
 namespace duckdb {
 
@@ -125,7 +125,7 @@ static void PragmaDisableOptimizer(ClientContext &context, const FunctionParamet
 }
 
 static void PragmaToggleNfaOutput(ClientContext &context, const FunctionParameters &parameters) {
-	g_nfa_output_enabled = !g_nfa_output_enabled;
+	nfa_output_enabled = !nfa_output_enabled;
 }
 
 void PragmaFunctions::RegisterFunction(BuiltinFunctions &set) {
