@@ -20,8 +20,11 @@ using MRMatchAssignment = unordered_map<string, vector<idx_t>>;
 
 struct MRMatchResult {
 	MRMatchAssignment assignment;
+    //! first row of the match
+    idx_t match_start; 
     //! first row after the match
 	idx_t match_end; 
+    idx_t match_length; 
 };
 
 //! Run NFA-based MATCH_RECOGNIZE pattern matching over one partition

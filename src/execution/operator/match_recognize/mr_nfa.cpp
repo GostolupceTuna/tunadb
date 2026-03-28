@@ -60,7 +60,9 @@ vector<MRMatchResult> MRRunPatternMatching(const string &pattern, idx_t num_rows
 			match_result.assignment[std::string(1, binding.var)].push_back(static_cast<idx_t>(binding.row_idx));
 		}
 		
+		match_result.match_start = static_cast<idx_t>(longest_match->bindings.front().row_idx);
 		match_result.match_end = static_cast<idx_t>(longest_match->bindings.back().row_idx + 1);	// last binding holds the last row
+		match_result.match_length = match_result.match_end - match_result.match_start;
 		results.push_back(std::move(match_result));
 	}
 
