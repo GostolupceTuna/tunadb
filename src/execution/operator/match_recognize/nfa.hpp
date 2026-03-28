@@ -6,6 +6,9 @@
 #include <functional>
 #include <set>
 
+// Global toggle for NFA debug output (default: off)
+extern bool nfa_output_enabled;
+
 struct matchedVar {
     char var;
     int row_idx;

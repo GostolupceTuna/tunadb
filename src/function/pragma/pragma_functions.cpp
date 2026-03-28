@@ -16,6 +16,9 @@
 
 #include <cctype>
 
+// NFA debug output toggle (defined in nfa.cpp, outside any namespace)
+extern bool g_nfa_output_enabled;
+
 namespace duckdb {
 
 static void PragmaEnableProfilingStatement(ClientContext &context, const FunctionParameters &parameters) {
@@ -121,6 +124,10 @@ static void PragmaDisableOptimizer(ClientContext &context, const FunctionParamet
 	ClientConfig::GetConfig(context).enable_optimizer = false;
 }
 
+static void PragmaToggleNfaOutput(ClientContext &context, const FunctionParameters &parameters) {
+	g_nfa_output_enabled = !g_nfa_output_enabled;
+}
+
 void PragmaFunctions::RegisterFunction(BuiltinFunctions &set) {
 	RegisterEnableProfiling(set);
 
@@ -163,6 +170,8 @@ void PragmaFunctions::RegisterFunction(BuiltinFunctions &set) {
 	set.AddFunction(PragmaFunction::PragmaStatement("enable_checkpoint_on_shutdown", PragmaEnableCheckpointOnShutdown));
 	set.AddFunction(
 	    PragmaFunction::PragmaStatement("disable_checkpoint_on_shutdown", PragmaDisableCheckpointOnShutdown));
+
+	set.AddFunction(PragmaFunction::PragmaStatement("toggle_nfa_output", PragmaToggleNfaOutput));
 }
 
 } // namespace duckdb
