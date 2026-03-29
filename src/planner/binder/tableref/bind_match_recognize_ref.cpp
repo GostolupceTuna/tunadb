@@ -166,6 +166,12 @@ BoundStatement Binder::Bind(MatchRecognizeRef &ref) {
         // validate and rewrite PREV(col) → col before binding
         ValidateAndRewritePrev(define.condition);
 
+        // NULL in DEFINE counts as false: coalesce(cond, false)
+        vector<unique_ptr<ParsedExpression>> coalesce_children;
+        coalesce_children.push_back(std::move(define.condition));
+        coalesce_children.push_back(make_uniq_base<ParsedExpression, ConstantExpression>(Value::BOOLEAN(false)));
+        define.condition = make_uniq_base<ParsedExpression, OperatorExpression>(ExpressionType::OPERATOR_COALESCE, std::move(coalesce_children));
+
         unique_ptr<Expression> bound_expr;
         try {
             bound_expr = expr_binder.Bind(define.condition);
