@@ -149,6 +149,32 @@ BoundStatement Binder::Bind(MatchRecognizeRef &ref) {
         result.bound_mr.order_by.emplace_back(order.type, order.null_order, std::move(bound_expr));
     }
 
+    // bind WITHIN (if it exists, is optional)
+    if (ref.within) {
+        unique_ptr<Expression> bound_within;
+        try {
+            bound_within = expr_binder.Bind(ref.within);
+        } catch (const Exception &ex) {
+            throw BinderException("Invalid WITHIN expression: %s", ex.what());
+        }
+        if (bound_within->return_type != LogicalType::INTERVAL) {
+            throw BinderException("WITHIN must be an INTERVAL expression");
+        }
+        // within only makes sense if we find matches in time-sorted data
+        if (result.bound_mr.order_by.empty()) {
+            throw BinderException("WITHIN requires ORDER BY");
+        }
+        // we assume first ORDER BY is time related
+        auto &order_type = result.bound_mr.order_by[0].expression->return_type;
+        auto order_id = order_type.id();
+        if (!(order_id == LogicalTypeId::DATE || order_id == LogicalTypeId::TIME ||
+            order_id == LogicalTypeId::TIME_TZ || order_id == LogicalTypeId::TIMESTAMP ||
+            order_id == LogicalTypeId::TIMESTAMP_TZ)) {
+            throw BinderException("WITHIN requires ORDER BY on a time or date column");
+        }
+        result.bound_mr.within = std::move(bound_within);
+    }
+
     // extract all variables from PATTERN
     unordered_set<string> pattern_vars = ExtractPatternVars(ref.pattern);
 

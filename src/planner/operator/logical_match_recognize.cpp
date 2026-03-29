@@ -62,6 +62,9 @@ InsertionOrderPreservingMap<string> LogicalMatchRecognize::ParamsToString() cons
 	result["orders"] = to_string(bound_mr.order_by.size());
 	result["defines"] = to_string(bound_mr.defines.size());
 	result["measures"] = to_string(bound_mr.measures.size());
+	if (bound_mr.within) {
+		result["within"] = bound_mr.within->ToString();
+	}
 	return result;
 }
 

@@ -532,6 +532,7 @@ typedef struct PGMatchRecognize {
 	PGNode		*within;
     char      *pattern;
     PGList      *define;
+	PGAlias     *alias;              	// optional alias for the MATCH_RECOGNIZE result
 } PGMatchRecognize;
 
 

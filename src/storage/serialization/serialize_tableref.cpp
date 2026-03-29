@@ -170,6 +170,7 @@ void MatchRecognizeRef::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<AfterMatchSkipType>(205, "after_match_skip", after_match_skip);
 	serializer.WritePropertyWithDefault<string>(206, "pattern", pattern);
 	serializer.WritePropertyWithDefault<vector<DefineDefinition>>(207, "define", define);
+	serializer.WritePropertyWithDefault<unique_ptr<ParsedExpression>>(208, "within", within);
 }
 
 unique_ptr<TableRef> MatchRecognizeRef::Deserialize(Deserializer &deserializer) {
@@ -182,6 +183,7 @@ unique_ptr<TableRef> MatchRecognizeRef::Deserialize(Deserializer &deserializer) 
 	deserializer.ReadProperty<AfterMatchSkipType>(205, "after_match_skip", result->after_match_skip);
 	deserializer.ReadPropertyWithDefault<string>(206, "pattern", result->pattern);
 	deserializer.ReadPropertyWithDefault<vector<DefineDefinition>>(207, "define", result->define);
+	deserializer.ReadPropertyWithDefault<unique_ptr<ParsedExpression>>(208, "within", result->within);
 	return std::move(result);
 }
 

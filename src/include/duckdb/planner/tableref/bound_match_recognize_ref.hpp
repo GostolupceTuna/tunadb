@@ -91,6 +91,8 @@ struct BoundMatchRecognizeInfo {
 	bool one_row_per_match = true;
 	//! The skip logic: AFTER MATCH SKIP PAST LAST ROW or TO NEXT ROW
 	bool skip_to_next_row = false;
+	//! The WITHIN time window
+	unique_ptr<Expression> within;
 	//! The pattern string
 	string pattern;
 	//! The bound MEASURES entries
@@ -116,6 +118,7 @@ struct BoundMatchRecognizeInfo {
 		measures = other.measures;
 		one_row_per_match = other.one_row_per_match;
 		skip_to_next_row = other.skip_to_next_row;
+		within = other.within ? other.within->Copy() : nullptr;
 		pattern = other.pattern;
 		names = other.names;
 		types = other.types;
@@ -140,6 +143,7 @@ struct BoundMatchRecognizeInfo {
 		measures = other.measures;
 		one_row_per_match = other.one_row_per_match;
 		skip_to_next_row = other.skip_to_next_row;
+		within = other.within ? other.within->Copy() : nullptr;
 		pattern = other.pattern;
 		names = other.names;
 		types = other.types;
@@ -162,6 +166,7 @@ struct BoundMatchRecognizeInfo {
 		}
 		copy.one_row_per_match = one_row_per_match;
 		copy.skip_to_next_row = skip_to_next_row;
+		copy.within = within ? within->Copy() : nullptr;
 		copy.pattern = pattern;
 		copy.names = names;
 		copy.types = types;
