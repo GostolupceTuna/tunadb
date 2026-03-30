@@ -215,7 +215,7 @@ BoundStatement Binder::Bind(MatchRecognizeRef &ref) {
 
     // bind MEASURES: each must be var.col or FUNC(var.col) AS alias
     const unordered_set<string> allowed_functions = {
-        "FIRST", "LAST", "COUNT", "MIN", "MAX", "SUM", "AVG"
+        "FIRST", "LAST", "COUNT", "COUNT_STAR", "MIN", "MAX", "SUM", "AVG"
     };
 
     for (auto &measure : ref.measures) {
@@ -243,6 +243,11 @@ BoundStatement Binder::Bind(MatchRecognizeRef &ref) {
                 throw BinderException("Unknown MEASURES function '%s'. Allowed: FIRST, LAST, COUNT, MIN, MAX, SUM, AVG",
                                       func.function_name);
             }
+            if (func_name == "COUNT_STAR") {
+                result.bound_mr.measures.emplace_back(func_name, "", "*", LogicalType::BIGINT, measure.alias,
+                                                      LogicalType::BIGINT, 0);
+                continue;
+            }
             if (func.children.size() != 1) {
                 throw BinderException("MEASURES function '%s' requires exactly one argument", func.function_name);
             }
@@ -268,6 +273,12 @@ BoundStatement Binder::Bind(MatchRecognizeRef &ref) {
         if (!pattern_vars.count(var_name)) {
             throw BinderException("Unknown pattern variable '%s' in MEASURES expression '%s'",
                                   var_name, expr->ToString());
+        }
+
+        // COUNT(var.*): count rows bound to var, no column binding needed
+        if (func_name == "COUNT" && col_name == "*") {
+            result.bound_mr.measures.emplace_back(func_name, var_name, col_name, LogicalType::BIGINT, measure.alias, LogicalType::BIGINT, 0);
+            continue;
         }
 
         // resolve column type and index

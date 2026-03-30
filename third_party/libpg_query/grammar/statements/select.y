@@ -1251,18 +1251,18 @@ mr_agg_expr:
 					n->agg_star = true;
 					$$ = (PGNode *) n;
 				}
-			| COUNT_P '(' mr_value_ref ')'
+			| COUNT_P '(' ColId '.' '*' ')'
 				{
-					PGFuncCall *n = makeFuncCall(SystemFuncName("count"), list_make1($3), @1);
+					PGFuncCall *n = makeFuncCall(SystemFuncName("count"), list_make1(makeColumnRef($3, 
+						list_make1(makeString("*")), @3, yyscanner)), @1);
 					$$ = (PGNode *) n;
 				}
 ;
 
 mr_value_ref:
-			columnref_opt_indirection
+			ColId '.' ColId
 				{
-					// TODO: GRM5 restrict to var.col and support COUNT(var.*).
-					$$ = $1;
+					$$ = makeColumnRef($1, list_make1(makeString($3)), @1, yyscanner);
 				}
 ;
 

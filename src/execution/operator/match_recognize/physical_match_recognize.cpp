@@ -461,7 +461,7 @@ static vector<vector<Value>> MaterializePartitionRows(ColumnDataCollection &part
 // function (FIRST, LAST, COUNT, MIN, MAX, SUM, AVG) over those rows' column values.
 // Returns a typed NULL if no rows were bound to the variable.
 static Value ComputeMeasure(const BoundMeasure &measure, const MRMatchAssignment &assignment,
-                            const vector<vector<Value>> &partition_rows) {
+                            const vector<vector<Value>> &partition_rows, idx_t match_length) {
 	// Look up the row indices the NFA assigned to this measure's pattern variable
 	auto it = assignment.find(measure.pattern_variable);
 	vector<idx_t> rows;
@@ -497,6 +497,10 @@ static Value ComputeMeasure(const BoundMeasure &measure, const MRMatchAssignment
 	// COUNT: number of matched rows (including NULLs)
 	if (func == "COUNT") {
 		return Value::BIGINT(NumericCast<int64_t>(rows.size()));
+	}
+	// COUNT_STAR(*): number of rows in the match
+	if (func == "COUNT_STAR") {
+		return Value::BIGINT(NumericCast<int64_t>(match_length));
 	}
 	// MIN: smallest non-NULL value among matched rows
 	if (func == "MIN") {
@@ -574,7 +578,7 @@ static Value ComputeMeasure(const BoundMeasure &measure, const MRMatchAssignment
 // Aggregate measures (FIRST, LAST, COUNT, ...) are the same for every row
 // in the match, so they delegate to ComputeMeasure.
 static Value ComputeMeasureForRow(const BoundMeasure &measure, const MRMatchAssignment &assignment,
-                                  const vector<vector<Value>> &partition_rows, idx_t current_row) {
+                                  const vector<vector<Value>> &partition_rows, idx_t current_row, idx_t match_length) {
 	// Bare column reference: per-row semantics
 	if (measure.function_name.empty()) {
 		auto it = assignment.find(measure.pattern_variable);
@@ -591,7 +595,7 @@ static Value ComputeMeasureForRow(const BoundMeasure &measure, const MRMatchAssi
 		return Value(measure.output_type);
 	}
 	// Aggregate functions are match-level, not row-level
-	return ComputeMeasure(measure, assignment, partition_rows);
+	return ComputeMeasure(measure, assignment, partition_rows, match_length);
 }
 
 //===--------------------------------------------------------------------===//
@@ -706,7 +710,7 @@ SourceResultType PhysicalMatchRecognize::GetDataInternal(ExecutionContext &conte
 
 					// Fill each MEASURES column for this row
 					for (idx_t m = 0; m < bound_mr.measures.size(); m++) {
-						auto val = ComputeMeasure(bound_mr.measures[m], match.assignment, partition_rows);
+						auto val = ComputeMeasure(bound_mr.measures[m], match.assignment, partition_rows, match.match_length);
 						output_chunk.SetValue(m, 0, std::move(val));
 					}
 					// append output row to results buffer
@@ -723,8 +727,8 @@ SourceResultType PhysicalMatchRecognize::GetDataInternal(ExecutionContext &conte
 
 						// Fill each MEASURES column for this row
 						for (idx_t m = 0; m < bound_mr.measures.size(); m++) {
-							auto val = ComputeMeasureForRow(bound_mr.measures[m], match.assignment,
-							                                partition_rows, current_row);
+							auto val = ComputeMeasureForRow(bound_mr.measures[m], match.assignment, 
+							                                partition_rows, current_row, match.match_length);
 							output_chunk.SetValue(m, 0, std::move(val));
 						}
 
