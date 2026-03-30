@@ -422,7 +422,8 @@ const Run* Simulation::find_matches(Simulation &sim, int &start_pos, int num_row
         start_pos++;
     } else {
         int match_length = static_cast<int>(longest_match->bindings.size());
-        start_pos += match_length;
+        // always advance by at least 1 to prevent infinite loop on empty matches
+        start_pos += (match_length > 0) ? match_length : 1;
     }
 
     return longest_match;
