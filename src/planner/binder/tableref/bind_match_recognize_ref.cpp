@@ -4,8 +4,10 @@
 #include "duckdb/parser/parsed_expression_iterator.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
+#include "duckdb/parser/expression/comparison_expression.hpp"
 #include "duckdb/planner/expression/bound_columnref_expression.hpp"
 #include "duckdb/planner/operator/logical_match_recognize.hpp"
+#include "duckdb/planner/expression/bound_cast_expression.hpp"
 
 namespace duckdb {
 
@@ -100,7 +102,7 @@ void ValidateAndRewritePrev(unique_ptr<ParsedExpression> &expr) {
 
     // then check if this node itself is PREV(...)
     if (expr->type == ExpressionType::FUNCTION) {
-        auto &func = expr->Cast<FunctionExpression>(); 
+        auto &func = expr->Cast<FunctionExpression>();
         if (StringUtil::Lower(func.function_name) == "prev") {
             if (func.children.size() != 1) {
                 throw BinderException("PREV() requires exactly one argument");
@@ -112,6 +114,46 @@ void ValidateAndRewritePrev(unique_ptr<ParsedExpression> &expr) {
         }
     }
 }
+
+// Return true if the parsed expression tree contains any PREV() call.
+static bool HasPrevCall(ParsedExpression &expr) {
+    if (expr.type == ExpressionType::FUNCTION) {
+        auto &func = expr.Cast<FunctionExpression>();
+        if (StringUtil::Lower(func.function_name) == "prev") {
+            return true;
+        }
+    }
+    bool found = false;
+    ParsedExpressionIterator::EnumerateChildren(expr, [&](unique_ptr<ParsedExpression> &child) {
+        if (!found) {
+            found = HasPrevCall(*child);
+        }
+    });
+    return found;
+}
+
+// Walk a parsed expression tree and replace every PREV(col) node with a virtual
+// column reference __prev__col__ that resolves against the virtual prev table.
+// Must be called AFTER ValidateAndRewriteVarCol, so col refs are single-part.
+static void RewritePrevToVirtualPrevColRef(unique_ptr<ParsedExpression> &expr) {
+    // recurse first so children are processed before the parent check
+    ParsedExpressionIterator::EnumerateChildren(*expr, [&](unique_ptr<ParsedExpression> &child) {
+        RewritePrevToVirtualPrevColRef(child);
+    });
+
+    if (expr->type == ExpressionType::FUNCTION) {
+        auto &func = expr->Cast<FunctionExpression>();
+        if (StringUtil::Lower(func.function_name) == "prev") {
+            D_ASSERT(func.children.size() == 1);
+            D_ASSERT(func.children[0]->type == ExpressionType::COLUMN_REF);
+            auto &col_ref = func.children[0]->Cast<ColumnRefExpression>();
+            string col_name = col_ref.column_names.back();
+            expr = make_uniq<ColumnRefExpression>("__prev__" + col_name + "__");
+        }
+    }
+}
+
+
 
 BoundStatement Binder::Bind(MatchRecognizeRef &ref) {
     // bind the child table in a child binder
@@ -178,6 +220,23 @@ BoundStatement Binder::Bind(MatchRecognizeRef &ref) {
     // extract all variables from PATTERN
     unordered_set<string> pattern_vars = ExtractPatternVars(ref.pattern);
 
+    // Set up a virtual prev table so PREV(col) can be bound to a separate column index.
+    // We register vritual column names __prev__col__ in the child binder's context.
+    // These are used only when building prev_exec_condition and are never visible to optimizers.
+    idx_t N = result.child.types.size();
+    idx_t prev_table_idx = result.child_binder->GenerateTableIndex();
+    result.bound_mr.prev_table_idx = prev_table_idx;
+    result.bound_mr.num_source_cols = N;
+
+    vector<string> prev_col_names;
+    vector<LogicalType> prev_col_types;
+    for (idx_t i = 0; i < N; i++) {
+        prev_col_names.push_back("__prev__" + result.child.names[i] + "__");
+        prev_col_types.push_back(result.child.types[i]);
+    }
+    result.child_binder->bind_context.AddGenericBinding(prev_table_idx, "__prev_table__",
+                                                        prev_col_names, prev_col_types);
+
     // bind DEFINE
     for (auto &define : ref.define) {
         // Validate DEFINE: for each 'DEFINE X AS …', check if X is contained in PATTERN
@@ -186,8 +245,30 @@ BoundStatement Binder::Bind(MatchRecognizeRef &ref) {
             throw BinderException("DEFINE variable '%s' does not appear in PATTERN", var);
         }
 
-        // validate and rewrite references like 'var.col' (e.g. A.val → val)  before binding
+        // validate and rewrite references like 'var.col' (e.g. A.val → val) before binding
         ValidateAndRewriteVarCol(define.condition, pattern_vars);
+
+        BoundDefine bound_define;
+        bound_define.variable_name = define.variable_name;
+
+        // If the condition contains PREV(), build a separate prev_exec_condition where
+        // PREV(col) references are already resolved to BoundReferenceExpression(N+k).
+        if (HasPrevCall(*define.condition)) {
+            bound_define.uses_prev = true;
+            auto prev_copy = define.condition->Copy();
+            RewritePrevToVirtualPrevColRef(prev_copy);
+            unique_ptr<Expression> prev_exec_bound;
+            try {
+                prev_exec_bound = expr_binder.Bind(prev_copy);
+            } catch (const Exception &ex) {
+                throw BinderException("Invalid PREV expression in DEFINE '%s': %s",
+                                      define.variable_name.c_str(), ex.what());
+            }
+            // Leave as BoundColumnRefExpression; plan_match_recognize.cpp will resolve
+            // these to BoundReferenceExpression using the post-optimization column bindings
+            // so that column pruning by RemoveUnusedColumns is accounted for.
+            bound_define.prev_exec_condition = std::move(prev_exec_bound);
+        }
 
         // validate and rewrite PREV(col) → col before binding
         ValidateAndRewritePrev(define.condition);
@@ -210,7 +291,8 @@ BoundStatement Binder::Bind(MatchRecognizeRef &ref) {
             throw BinderException("DEFINE condition for '%s' must return BOOLEAN, got %s", define.variable_name.c_str(), bound_expr->return_type.ToString());
         }
 
-        result.bound_mr.defines.emplace_back(define.variable_name, std::move(bound_expr));
+        bound_define.condition = std::move(bound_expr);
+        result.bound_mr.defines.push_back(std::move(bound_define));
     }
 
     // bind MEASURES: each must be var.col or FUNC(var.col) AS alias

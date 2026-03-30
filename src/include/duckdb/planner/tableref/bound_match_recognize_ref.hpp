@@ -18,6 +18,13 @@ struct BoundDefine {
 	string variable_name;
 	unique_ptr<Expression> condition;
 
+	//! True when the DEFINE condition contains any PREV() call.
+	bool uses_prev = false;
+	//! Execution-only condition for PREV defines. PREV(col) references have been
+	//! rewritten to BoundReferenceExpression(N+k) so ExpressionExecutor can evaluate
+	//! them against a doubled chunk [current row cols | previous row cols].
+	unique_ptr<Expression> prev_exec_condition;
+
 	BoundDefine() = default;
 	BoundDefine(string variable_name, unique_ptr<Expression> condition)
 		: variable_name(std::move(variable_name)), condition(std::move(condition)) {
@@ -26,7 +33,9 @@ struct BoundDefine {
 	// Deep-copy constructor: BoundDefine owns a unique_ptr<Expression>, so we must clone the expression tree to avoid copying unique_ptrs.
 	BoundDefine(const BoundDefine &other)
 	    : variable_name(other.variable_name),
-	      condition(other.condition ? other.condition->Copy() : nullptr) {
+	      condition(other.condition ? other.condition->Copy() : nullptr),
+	      uses_prev(other.uses_prev),
+	      prev_exec_condition(other.prev_exec_condition ? other.prev_exec_condition->Copy() : nullptr) {
 	}
 
 	// Deep-copy assignment: same reason as above; replace current owned expression with a clone.
@@ -34,11 +43,16 @@ struct BoundDefine {
 		if (this == &other) return *this;
 		variable_name = other.variable_name;
 		condition = other.condition ? other.condition->Copy() : nullptr;
+		uses_prev = other.uses_prev;
+		prev_exec_condition = other.prev_exec_condition ? other.prev_exec_condition->Copy() : nullptr;
 		return *this;
 	}
 
 	BoundDefine Copy() const {
-		return BoundDefine(variable_name, condition ? condition->Copy() : nullptr);
+		BoundDefine copy(variable_name, condition ? condition->Copy() : nullptr);
+		copy.uses_prev = uses_prev;
+		copy.prev_exec_condition = prev_exec_condition ? prev_exec_condition->Copy() : nullptr;
+		return copy;
 	}
 	void Serialize(Serializer &serializer) const;
 	static BoundDefine Deserialize(Deserializer &deserializer);
@@ -100,6 +114,10 @@ struct BoundMatchRecognizeInfo {
 	//! The schema currently exported by the relation
 	vector<string> names;
 	vector<LogicalType> types;
+	//! Bind index of the virtual prev table (used at bind time to resolve PREV refs)
+	idx_t prev_table_idx = 0;
+	//! Number of source columns N (size of one "half" of the doubled eval chunk for PREV)
+	idx_t num_source_cols = 0;
 
 	BoundMatchRecognizeInfo() = default;
 
@@ -122,6 +140,8 @@ struct BoundMatchRecognizeInfo {
 		pattern = other.pattern;
 		names = other.names;
 		types = other.types;
+		prev_table_idx = other.prev_table_idx;
+		num_source_cols = other.num_source_cols;
 	}
 
 	// Deep-copy assignment: same reason as above; replaces owned data with cloned copies to avoid sharing or copying unique_ptrs.
@@ -147,6 +167,8 @@ struct BoundMatchRecognizeInfo {
 		pattern = other.pattern;
 		names = other.names;
 		types = other.types;
+		prev_table_idx = other.prev_table_idx;
+		num_source_cols = other.num_source_cols;
 		return *this;
 	}
 
@@ -170,6 +192,8 @@ struct BoundMatchRecognizeInfo {
 		copy.pattern = pattern;
 		copy.names = names;
 		copy.types = types;
+		copy.prev_table_idx = prev_table_idx;
+		copy.num_source_cols = num_source_cols;
 		return copy;
 	}
 	void Serialize(Serializer &serializer) const;

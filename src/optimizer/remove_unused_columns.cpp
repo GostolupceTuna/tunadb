@@ -1,6 +1,7 @@
 #include "duckdb/optimizer/remove_unused_columns.hpp"
 
 #include "duckdb/common/assert.hpp"
+#include "duckdb/common/enums/logical_operator_type.hpp"
 #include "duckdb/common/pair.hpp"
 #include "duckdb/function/aggregate/distributive_functions.hpp"
 #include "duckdb/function/function_binder.hpp"
@@ -274,7 +275,8 @@ void RemoveUnusedColumns::VisitOperator(LogicalOperator &op) {
 	case LogicalOperatorType::LOGICAL_MATERIALIZED_CTE:
 	case LogicalOperatorType::LOGICAL_CTE_REF:
 	case LogicalOperatorType::LOGICAL_COPY_TO_FILE:
-	case LogicalOperatorType::LOGICAL_PIVOT: {
+	case LogicalOperatorType::LOGICAL_PIVOT:
+	case duckdb::LogicalOperatorType::LOGICAL_MATCH_RECOGNIZE: {
 		everything_referenced = true;
 		break;
 	}

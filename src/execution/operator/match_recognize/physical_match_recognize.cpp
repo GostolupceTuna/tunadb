@@ -372,10 +372,17 @@ static bool ExceedsWithin(const Value &start, const Value &end, const Value &wit
 // pattern variable name to a boolean mask (one bool per row). The NFA guard
 // functions later check these masks to decide whether a variable matches at
 // a given row position.
+// For PREV conditions, prev_exec_condition is used — it already has doubled
+// BoundReferenceExpression indices (N+k for previous-row slots). The eval chunk is
+// doubled: columns [0..N-1] hold the current row, columns [N..2N-1] hold the
+// previous row (NULL for row 0).
 static unordered_map<string, vector<bool>> EvaluateDefines(const vector<BoundDefine> &defines,
-                                                            ColumnDataCollection &partition, ClientContext &client) {
+                                                            ColumnDataCollection &partition, ClientContext &client,
+                                                            const vector<vector<Value>> &partition_rows) {
 	unordered_map<string, vector<bool>> var_masks;
 	idx_t num_rows = partition.Count();
+	auto &col_types = partition.Types();
+	idx_t N = col_types.size();
 
 	// Process each DEFINE independently: build an executor, scan the
 	// partition, evaluate the boolean condition, and store the result mask
@@ -383,24 +390,52 @@ static unordered_map<string, vector<bool>> EvaluateDefines(const vector<BoundDef
 		// Start with all rows set to false (no match)
 		vector<bool> mask(num_rows, false);
 
+		// For PREV defines use the pre-built exec condition (doubled indices already set).
+		// For non-PREV defines use the regular condition.
+		vector<LogicalType> chunk_types(col_types.begin(), col_types.end());
+		unique_ptr<Expression> exec_condition;
+		if (define.uses_prev) {
+			D_ASSERT(define.prev_exec_condition);
+			exec_condition = define.prev_exec_condition->Copy();
+			chunk_types.insert(chunk_types.end(), col_types.begin(), col_types.end());
+		} else {
+			exec_condition = define.condition->Copy();
+		}
+
 		// Wrap the DEFINE condition in an ExpressionExecutor
 		vector<unique_ptr<Expression>> exprs;
-		exprs.push_back(define.condition->Copy());
+		exprs.push_back(std::move(exec_condition));
 		ExpressionExecutor executor(client, exprs);
 
 		// Prepare a fresh scan over the partition
-		DataChunk scan_chunk;
-		partition.InitializeScanChunk(scan_chunk);
-		ColumnDataScanState scan_state;
-		partition.InitializeScan(scan_state);
+		DataChunk eval_chunk;
+		eval_chunk.Initialize(Allocator::DefaultAllocator(), chunk_types);
+		DataChunk result_chunk;
+		result_chunk.Initialize(Allocator::DefaultAllocator(), {LogicalType::BOOLEAN});
 
 		idx_t row = 0;
-		while (partition.Scan(scan_state, scan_chunk)) {
-			// Allocate a boolean result chunk and execute the condition
-			DataChunk result_chunk;
-			result_chunk.Initialize(Allocator::DefaultAllocator(), {LogicalType::BOOLEAN});
-			executor.Execute(scan_chunk, result_chunk);
+		while (row < num_rows) {
+			idx_t batch_size = MinValue<idx_t>(num_rows - row, (idx_t)STANDARD_VECTOR_SIZE);
+			eval_chunk.Reset();
+			eval_chunk.SetCardinality(batch_size);
 
+			for (idx_t r = 0; r < batch_size; r++) {
+				idx_t abs_row = row + r;
+				for (idx_t c = 0; c < N; c++) {
+					eval_chunk.SetValue(c, r, partition_rows[abs_row][c]);
+				}
+				if (define.uses_prev) {
+					for (idx_t c = 0; c < N; c++) {	
+						// NULL if there is no previous row in partition
+						Value prev_val = (abs_row == 0) ? Value(col_types[c]) : partition_rows[abs_row - 1][c];
+						eval_chunk.SetValue(N + c, r, prev_val); // N + c for prev
+					}
+				}
+			}
+
+			result_chunk.Reset();
+			executor.Execute(eval_chunk, result_chunk);
+			
 			// Flatten converts any dictionary/constant vectors to flat format
 			// so we can safely read the raw bool* array and validity mask
 			result_chunk.Flatten();
@@ -410,10 +445,10 @@ static unordered_map<string, vector<bool>> EvaluateDefines(const vector<BoundDef
 
 			// A row matches the DEFINE only if the value is valid (not NULL)
 			// and the boolean value is true
-			for (idx_t r = 0; r < scan_chunk.size(); r++) {
+			for (idx_t r = 0; r < batch_size; r++) {
 				mask[row + r] = validity.RowIsValid(r) && result_data[r];
 			}
-			row += scan_chunk.size();
+			row += batch_size;
 		}
 
 		var_masks[define.variable_name] = std::move(mask);
@@ -674,7 +709,7 @@ SourceResultType PhysicalMatchRecognize::GetDataInternal(ExecutionContext &conte
 			auto partition_rows = MaterializePartitionRows(*partition_data);
 
 			// turn DEFINEs into boolean masks (one for each variable)
-			auto var_masks = EvaluateDefines(bound_mr.defines, *partition_data, client);
+			auto var_masks = EvaluateDefines(bound_mr.defines, *partition_data, client, partition_rows);
 
 			// cache values of the leading ORDER BY column to calculate match durations for WITHIN
 			vector<Value> order_values;
@@ -727,7 +762,7 @@ SourceResultType PhysicalMatchRecognize::GetDataInternal(ExecutionContext &conte
 
 						// Fill each MEASURES column for this row
 						for (idx_t m = 0; m < bound_mr.measures.size(); m++) {
-							auto val = ComputeMeasureForRow(bound_mr.measures[m], match.assignment, 
+							auto val = ComputeMeasureForRow(bound_mr.measures[m], match.assignment,
 							                                partition_rows, current_row, match.match_length);
 							output_chunk.SetValue(m, 0, std::move(val));
 						}
