@@ -1,0 +1,68 @@
+# name: test/sql/match_recognize/within.test
+# description: WITHIN clause tests
+# group: [match_recognize]
+
+statement ok
+CREATE TABLE t_within(id INTEGER, ts TIMESTAMP);
+
+statement ok
+INSERT INTO t_within VALUES
+    (1, '2025-01-01 10:00:00'),
+    (2, '2025-01-01 10:05:00'),
+    (3, '2025-01-01 10:30:00');
+
+query I
+SELECT count(*) FROM t_within MATCH_RECOGNIZE (
+    ORDER BY ts
+    MEASURES A.id AS m
+    AFTER MATCH SKIP TO NEXT ROW
+    WITHIN 10 MINUTE
+    PATTERN ('A B')
+    DEFINE A AS A.id >= 0, B AS B.id >= 0
+)
+----
+1
+
+# --- WITHIN is inclusive on the exact boundary ---
+query I
+SELECT count(*) FROM t_within MATCH_RECOGNIZE (
+    ORDER BY ts
+    MEASURES A.id AS m
+    AFTER MATCH SKIP TO NEXT ROW
+    WITHIN 5 MINUTE
+    PATTERN ('A B')
+    DEFINE A AS A.id >= 0, B AS B.id >= 0
+)
+----
+1
+
+# --- WITHIN must be a constant INTERVAL expression ---
+statement error
+SELECT count(*) FROM t_within MATCH_RECOGNIZE (
+    ORDER BY ts
+    MEASURES A.id AS m
+    AFTER MATCH SKIP PAST LAST ROW
+    WITHIN ts - ts
+    PATTERN ('A')
+    DEFINE A AS A.id >= 0
+)
+----
+constant INTERVAL expression
+
+statement ok
+CREATE TABLE t_within_bad(id INTEGER, ts INTEGER);
+
+statement ok
+INSERT INTO t_within_bad VALUES (1, 1), (2, 2);
+
+statement error
+SELECT count(*) FROM t_within_bad MATCH_RECOGNIZE (
+    ORDER BY ts
+    MEASURES A.id AS m
+    AFTER MATCH SKIP PAST LAST ROW
+    WITHIN 5 MINUTE
+    PATTERN ('A')
+    DEFINE A AS A.id >= 0
+)
+----
+time or date column

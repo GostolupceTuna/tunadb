@@ -1,0 +1,272 @@
+# Inhaltsverzeichnis
+
+1. [Überblick](#überblick)
+2. [Fragment-Grammatik](#fragment-grammatik)
+3. [Klauseln im Detail](#klauseln-im-detail)
+4. [PATTERN-Syntax](#pattern-syntax)
+5. [ROWS PER MATCH](#rows-per-match)
+6. [AFTER MATCH SKIP](#after-match-skip)
+7. [Fehlermeldungen & Ursachen](#fehlermeldungen--ursachen)
+8. [Bekannte Limitierungen](#bekannte-limitierungen)
+9. [Literatur & Referenzen](#literatur--referenzen)
+
+---
+
+## Überblick
+
+`MATCH_RECOGNIZE` ist eine SQL-Erweiterung zur **Erkennung von Zeilenmustern** in geordneten Datenströmen. 
+Sie erlaubt es, reguläre Ausdrücke über Zeilen einer Tabelle auszuwerten, ähnlich wie `REGEXP` über Zeichen, aber auf ganzen Tabellenzeilen.
+
+Typische Anwendungsfälle:
+- Aktientrends erkennen (z. B. V-förmige Preisbewegungen)
+- Sensor-Anomalien detektieren (z. B. steigend → Spitze → fallend)
+- Web-Session-Analysen (z. B. Login → Produktseite → Checkout)
+
+---
+
+## Fragment-Grammatik
+
+```sql
+match_recognize_clause ::=
+  table_ref MATCH_RECOGNIZE (
+    [ PARTITION BY expr { , expr } ]
+    ORDER BY expr [ ASC | DESC ] { , expr [ ASC | DESC ] }
+    [ MEASURES measure_expr AS alias { , measure_expr AS alias } ]
+    [ ONE ROW PER MATCH | ALL ROWS PER MATCH ]
+    [ AFTER MATCH SKIP PAST LAST ROW
+    | AFTER MATCH SKIP TO NEXT ROW ]
+    PATTERN ( pattern_string )
+    [ WITHIN interval_expr ]
+    [ DEFINE var AS boolean_expr { , var AS boolean_expr } ]
+  ) [ AS alias ]
+```
+
+### Kurzgrammatik (EBNF-artig)
+
+```
+partition_clause
+    ::= 'PARTITION BY' expr (',' expr)*
+
+order_clause
+    ::= 'ORDER BY' order_item (',' order_item)*
+
+order_item
+    ::= expr [ 'ASC' | 'DESC' ]
+
+measures_clause
+    ::= 'MEASURES' measure_item (',' measure_item)*
+
+measure_item
+    ::= measure_expr 'AS' identifier
+
+measure_expr
+    ::= var '.' column
+      | aggregate_func '(' var '.' column ')'
+
+aggregate_func
+    ::= 'FIRST' | 'LAST' | 'COUNT' | 'MIN' | 'MAX' | 'SUM' | 'AVG'
+
+rows_per_match_clause
+    ::= 'ONE ROW PER MATCH'          
+      | 'ALL ROWS PER MATCH'
+
+after_match_skip_clause
+    ::= 'AFTER MATCH SKIP PAST LAST ROW'    
+      | 'AFTER MATCH SKIP TO NEXT ROW'
+
+pattern_clause
+    ::= 'PATTERN' '(' pattern_string ')'
+
+within_clause
+    ::= 'WITHIN' interval_expr
+
+pattern_string
+    ::= pattern_term ( ' ' pattern_term )*
+      | pattern_term '|' pattern_term
+
+pattern_term
+    ::= pattern_atom [ quantifier ]
+
+pattern_atom
+    ::= identifier
+      | '(' pattern_string ')'
+
+quantifier
+    ::= '*' | '+' | '?'
+
+define_clause
+    ::= 'DEFINE' define_item (',' define_item)*
+
+define_item
+    ::= identifier 'AS' boolean_expr
+```
+
+---
+
+## Klauseln im Detail
+
+### PARTITION BY *(optional)*
+
+Teilt die Eingabe in unabhängige Partitionen. Die Mustererkennung wird **separat** innerhalb jeder Partition durchgeführt.
+
+```sql
+PARTITION BY symbol          -- z. B. Aktien-Ticker
+PARTITION BY sensor_id, zone
+```
+
+Ohne `PARTITION BY` wird die gesamte Eingabe als eine Partition behandelt.
+
+### ORDER BY *(Pflicht)*
+
+Legt die Reihenfolge der Zeilen innerhalb jeder Partition fest. **ORDER BY ist zwingend erforderlich** – fehlt es, wird ein Laufzeitfehler ausgelöst.
+
+```sql
+ORDER BY event_time ASC
+ORDER BY ts DESC
+```
+
+### MEASURES
+
+Definiert die Ausgabespalten des `MATCH_RECOGNIZE`-Ausdrucks. Jede Measure referenziert eine Mustervariable und eine Quellspalte, optional mit einer Aggregatfunktion.
+
+**Erlaubte Aggregatfunktionen:**
+
+| Funktion | Ausgabetyp |
+|----------|-----------|
+| `FIRST(var.col)` | Typ von `col` |
+| `LAST(var.col)` | Typ von `col` |
+| `MIN(var.col)` | Typ von `col` |
+| `MAX(var.col)` | Typ von `col` |
+| `COUNT(var.col)` | `BIGINT` |
+| `SUM(var.col)` | `DOUBLE` |
+| `AVG(var.col)` | `DOUBLE` |
+
+Ohne Aggregatfunktion: `var.col` gibt den Wert der ersten Zeile zurück, die der Variable zugeordnet ist.
+
+### WITHIN *(optional)*
+
+Begrenzt die maximale Dauer eines Matches.
+
+```sql
+WITHIN INTERVAL '10' MINUTE
+WITHIN INTERVAL '1' HOUR
+```
+
+### DEFINE
+
+Ordnet jeder Mustervariable eine boolesche Bedingung zu. Eine Zeile wird einer Variable zugeordnet, wenn ihre Bedingung `TRUE` ergibt.
+
+```sql
+DEFINE
+  UP   AS price > PREV(price),
+  DOWN AS price < PREV(price)
+```
+
+**Besonderheiten:**
+- `PREV(col)` verweist auf den Wert derselben Spalte in der vorherigen Zeile. Die aktuelle Implementierung schreibt `PREV(col)` intern zu `col` um; das Verhalten entspricht einem einfachen Spaltenzugriff auf die vorherige Zeile im NFA-Kontext.
+- Variablenreferenzen der Form `VAR.col` (z. B. `A.price`) werden automatisch zu `col` umgeschrieben.
+- Alle Variablen in `DEFINE` müssen im `PATTERN` vorkommen. Umgekehrt gilt: Variablen im `PATTERN`, die **nicht** in `DEFINE` erscheinen, matchen jede beliebige Zeile (universeller Quantor).
+
+---
+
+## PATTERN-Syntax
+
+Das Pattern ist ein **regulärer Ausdruck über Variablennamen**. Erlaubte Zeichen und Operatoren:
+
+| Symbol | Bedeutung |
+|--------|-----------|
+| `A` | Variable (alphabetische Buchstaben) |
+| `A B` | Sequenz (A gefolgt von B) |
+| `A \| B` | Alternation (A oder B) |
+| `A*` | Null oder mehr Wiederholungen von A |
+| `A+` | Eine oder mehr Wiederholungen von A |
+| `A?` | Null oder eine Wiederholung von A |
+| `(A B)+` | Gruppe mit Quantor |
+
+### Beispiele
+
+```
+PATTERN ('A B+ C')          -- A, mindestens ein B, dann C
+PATTERN ('R* P D*')         -- beliebig viele R, ein P, beliebig viele D
+PATTERN ('A | B')           -- entweder A oder B
+PATTERN ('A (B | C) D')     -- A, dann B oder C, dann D
+```
+
+> **Wichtig:** Variablennamen dürfen nur aus **einem alphabetischen Zeichen** bestehen (`[a-zA-Z]`). Ziffern, Unterstriche oder andere Zeichen sind im Pattern nicht erlaubt.
+
+---
+
+## ROWS PER MATCH
+
+| Option | Verhalten |
+|--------|-----------|
+| `ONE ROW PER MATCH` *(Standard)* | Pro gefundenem Match wird **eine** Ausgabezeile produziert. |
+| `ALL ROWS PER MATCH` | Pro Zeile im Match wird **eine** Ausgabezeile produziert. |
+
+---
+
+## AFTER MATCH SKIP
+
+Steuert, wo die Mustererkennung nach einem gefundenen Match fortgesetzt wird:
+
+| Option | Verhalten |
+|--------|-----------|
+| `AFTER MATCH SKIP PAST LAST ROW` *(Standard)* | Suche wird nach der letzten Zeile des Matches fortgesetzt. Überlappende Matches werden nicht gefunden. |
+| `AFTER MATCH SKIP TO NEXT ROW` | Suche wird bei der zweiten Zeile des Matches neu gestartet. Überlappende Matches sind möglich. |
+
+---
+
+## Einige Fehlermeldungen 
+
+1. `MATCH RECOGNIZE requires ORDER BY` : [src/execution/operator/match_recognize/physical_match_recognize.cpp#L21]
+
+2. `MATCH_RECOGNIZE MEASURES: expected ResTarget node` : [src/parser/transform/tableref/transform_match_recognize.cpp#L31]
+
+3. `MATCH_RECOGNIZE DEFINE: expected ResTarget node` : [src/parser/transform/tableref/transform_match_recognize.cpp#L49]
+
+4. `Column '%s' does not exist in source table` : [src/planner/binder/tableref/bind_match_recognize_ref.cpp#L20]
+
+5. `Invalid character '%c' in PATTERN` : [src/planner/binder/tableref/bind_match_recognize_ref.cpp#L50]
+
+6. `Unknown pattern variable '%s' in expression` : [src/planner/binder/tableref/bind_match_recognize_ref.cpp#L80]
+
+7. `Column '%s' referenced in '%s.%s' does not exist in source table` : [src/planner/binder/tableref/bind_match_recognize_ref.cpp#L92]
+
+8. `Unknown column %s in PARTITION BY: %s` : [src/planner/binder/tableref/bind_match_recognize_ref.cpp#L145]
+
+9. `Unknown column %s in ORDER BY: %s` : [src/planner/binder/tableref/bind_match_recognize_ref.cpp#L156]
+
+10. `DEFINE variable '%s' does not appear in PATTERN` : [src/planner/binder/tableref/bind_match_recognize_ref.cpp#L169]
+
+11. `Invalid DEFINE condition '%s' for variable '%s': %s` : [src/planner/binder/tableref/bind_match_recognize_ref.cpp#L182]
+
+12. `DEFINE condition for '%s' must return BOOLEAN, got %s` : [src/planner/binder/tableref/bind_match_recognize_ref.cpp#L187]
+
+13. `MEASURES expression '%s' must be var.col or FUNC(var.col)` : [`bind_match_recognize_ref.cpp:208`](src/planner/binder/tableref/bind_match_recognize_ref.cpp#L208), [`bind_match_recognize_ref.cpp:240`](src/planner/binder/tableref/bind_match_recognize_ref.cpp#L240) 
+
+14. `Unknown MEASURES function '%s'. Allowed: FIRST, LAST, COUNT, MIN, MAX, SUM, AVG` : [src/planner/binder/tableref/bind_match_recognize_ref.cpp#L220]
+
+15. `MEASURES function '%s' requires exactly one argument` : [src/planner/binder/tableref/bind_match_recognize_ref.cpp#L224]
+
+16. `MEASURES function '%s' argument must be a column reference (var.col)` : [src/planner/binder/tableref/bind_match_recognize_ref.cpp#L227]
+
+17. `MEASURES function '%s' argument must be var.col (e.g. A.price)` : [src/planner/binder/tableref/bind_match_recognize_ref.cpp#L233]
+
+18.  `Unknown pattern variable '%s' in MEASURES expression '%s'` : [src/planner/binder/tableref/bind_match_recognize_ref.cpp#L246]
+
+---
+
+## Limitierungen
+
+1. `MEASURES` ist auf Ausdrücke der Form `var.col` oder `FUNC(var.col)` beschränkt. Allgemeinere Ausdruecke werden nicht unterstützt.  
+    [src/planner/binder/tableref/bind_match_recognize_ref.cpp#L216, L227, L262]
+
+2. In `MEASURES` sind nur die Funktionen `FIRST`, `LAST`, `COUNT`, `MIN`, `MAX`, `SUM` und `AVG` erlaubt. Funktionen wie `CLASSIFIER()` oder `MATCH_NUMBER()` werden nicht unterstützt.  
+   [src/planner/binder/tableref/bind_match_recognize_ref.cpp#L217 , src/include/duckdb/parser/tableref/match_recognize_ref.hpp#L76] 
+
+3. Die `PATTERN`-Syntax ist eingeschränkt, erlaubt sind nur alphabetische Variablennamen sowie die Operatoren `*`, `+`, `?`, `|`, Klammern und Leerzeichen. Erweiterte Quantifizierer wie `{m,n}`, 
+   Exclusion-Syntax, `PERMUTE` oder Anchors werden nicht unterstützt.  
+   [src/planner/binder/tableref/bind_match_recognize_ref.cpp#L38]
+
+4. `ORDER BY` ist in der aktuellen Ausführung verpflichtend. Ohne `ORDER BY` kann `MATCH_RECOGNIZE` nicht ausgeführt werden.
+    [src/execution/operator/match_recognize/physical_match_recognize.cpp#L32]

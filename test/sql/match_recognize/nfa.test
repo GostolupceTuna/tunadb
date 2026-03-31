@@ -22,6 +22,31 @@ SELECT count(*) FROM t MATCH_RECOGNIZE (
 ----
 3
 
+# --- Missing DEFINE entries act as wildcards ---
+query I
+SELECT count(*) FROM t MATCH_RECOGNIZE (
+    ORDER BY ts
+    MEASURES A.id AS m
+    AFTER MATCH SKIP TO NEXT ROW
+    PATTERN ('A B')
+    DEFINE  A AS A.id = 1,
+            B AS TRUE
+)
+----
+1
+
+# --- Empty matches must be skipped ---
+query I
+SELECT count(*) FROM t MATCH_RECOGNIZE (
+    ORDER BY ts
+    MEASURES COUNT(*) AS cnt
+    AFTER MATCH SKIP PAST LAST ROW
+    PATTERN ('A*')
+    DEFINE A AS FALSE
+)
+----
+0
+
 # --- Pattern "A B+", SKIP PAST LAST ROW ---
 # Greedy: one A (row 0) then B+ consumes rows 1-3 -> 1 match
 query I
@@ -34,6 +59,31 @@ SELECT count(*) FROM t MATCH_RECOGNIZE (
 )
 ----
 1
+
+# --- Alternation: "A | B" should match either branch ---
+query I
+SELECT count(*) FROM t MATCH_RECOGNIZE (
+    ORDER BY ts
+    MEASURES COUNT(*) AS cnt
+    AFTER MATCH SKIP TO NEXT ROW
+    PATTERN ('A | B')
+    DEFINE A AS A.id = 1, B AS B.id = 4
+)
+----
+2
+
+# --- Precedence: alternation binds weaker than concatenation ---
+# "A | B C" must parse as "A | (B C)"
+query I
+SELECT count(*) FROM t MATCH_RECOGNIZE (
+    ORDER BY ts
+    MEASURES COUNT(*) AS cnt
+    AFTER MATCH SKIP PAST LAST ROW
+    PATTERN ('A | B C')
+    DEFINE A AS A.id = 1, B AS B.id = 2, C AS C.id = 3
+)
+----
+2
 
 # --- PARTITION BY: two groups matched independently ---
 # group p=1: 3 rows, "A+" -> 1 match
@@ -57,7 +107,7 @@ SELECT count(*) FROM t2 MATCH_RECOGNIZE (
 ----
 2
 
-# --- MEASURES output is currently NULL (PHY1 placeholder) ---
+# --- MEASURES output now returns bound values instead of the old PHY1 NULL placeholder ---
 query I
 SELECT m IS NULL FROM t MATCH_RECOGNIZE (
     ORDER BY ts
@@ -67,8 +117,115 @@ SELECT m IS NULL FROM t MATCH_RECOGNIZE (
     DEFINE A AS A.id >= 0, B AS B.id >= 0
 )
 ----
-true
-true
+0
+0
+
+# --- MEASURES input columns must survive child column remapping/pruning ---
+statement ok
+CREATE TABLE t3(id INTEGER, payload INTEGER, ts INTEGER);
+
+statement ok
+INSERT INTO t3 VALUES (1, 10, 1), (2, 20, 2), (3, 30, 3);
+
+query I
+SELECT m FROM t3 MATCH_RECOGNIZE (
+    ORDER BY ts
+    MEASURES A.payload AS m
+    AFTER MATCH SKIP PAST LAST ROW
+    PATTERN ('A')
+    DEFINE A AS A.id >= 0
+)
+----
+10
+20
+30
+
+# --- FIRST vs LAST: must return different rows ---
+# Pattern "A B+": A binds row 0 (id=1), B binds rows 1-3 (id=2,3,4)
+# FIRST(A.id) = 1, LAST(B.id) = 4
+query II
+SELECT first_val, last_val FROM t MATCH_RECOGNIZE (
+    ORDER BY ts
+    MEASURES FIRST(A.id) AS first_val, LAST(B.id) AS last_val
+    AFTER MATCH SKIP PAST LAST ROW
+    PATTERN ('A B+')
+    DEFINE A AS A.id >= 0, B AS B.id >= 0
+)
+----
+1	4
+
+# --- COUNT(var.*): count rows bound to one variable only ---
+query I
+SELECT cnt_a FROM t MATCH_RECOGNIZE (
+    ORDER BY ts
+    MEASURES COUNT(A.*) AS cnt_a
+    AFTER MATCH SKIP PAST LAST ROW
+    PATTERN ('A B+')
+    DEFINE A AS A.id >= 0, B AS B.id >= 0
+)
+----
+1
+
+# --- ALL ROWS PER MATCH: output one row for each row in the match ---
+query I
+SELECT count(*) FROM t MATCH_RECOGNIZE (
+    ORDER BY ts
+    MEASURES A.id AS m
+    ALL ROWS PER MATCH
+    AFTER MATCH SKIP PAST LAST ROW
+    PATTERN ('A B+')
+    DEFINE A AS A.id >= 0, B AS B.id >= 0
+)
+----
+4
+
+# --- NULL in DEFINE counts as false ---
+statement ok
+CREATE TABLE t_null(val INTEGER, ts INTEGER);
+
+statement ok
+INSERT INTO t_null VALUES (NULL, 1), (5, 2), (NULL, 3), (7, 4);
+
+query I
+SELECT count(*) FROM t_null MATCH_RECOGNIZE (
+    ORDER BY ts
+    MEASURES A.val AS m
+    AFTER MATCH SKIP TO NEXT ROW
+    PATTERN ('A')
+    DEFINE A AS A.val > 0
+)
+----
+2
+
+# --- PREV() must work across chunk boundaries ---
+statement ok
+CREATE TABLE t_prev_big AS
+SELECT i AS id, 4000 - i AS price, i AS ts
+FROM range(3000) tbl(i);
+
+query I
+SELECT count(*) FROM t_prev_big MATCH_RECOGNIZE (
+    ORDER BY ts
+    MEASURES A.id AS m
+    AFTER MATCH SKIP PAST LAST ROW
+    PATTERN ('A B+')
+    DEFINE A AS A.price >= 0, B AS B.price < PREV(B.price)
+)
+----
+1
+
+# --- SUBSET should raise a clear unsupported error ---
+statement error
+SELECT count(*) FROM t MATCH_RECOGNIZE (
+    ORDER BY ts
+    MEASURES A.id AS m
+    AFTER MATCH SKIP PAST LAST ROW
+    PATTERN ('A')
+    SUBSET U = (A)
+    DEFINE A AS A.id >= 0
+)
+----
+syntax error at or near "SUBSET"
 
 # --- Tie detection: two rows with same ORDER BY value -> error ---
 statement error
