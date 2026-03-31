@@ -245,6 +245,20 @@ BoundStatement Binder::Bind(MatchRecognizeRef &ref) {
             throw BinderException("DEFINE variable '%s' does not appear in PATTERN", var);
         }
 
+        for ( auto c : pattern_vars) {
+            bool isFound = false;
+            for (auto &define : ref.define) {
+                const auto &var = define.variable_name;
+                if (c == var) {
+                    isFound = true;
+                    break;
+                }
+            }
+            if (!isFound) {
+                throw BinderException("PATTERN variable '%s' does not appear in DEFINE", c);
+            }
+        }
+
         // validate and rewrite references like 'var.col' (e.g. A.val → val) before binding
         ValidateAndRewriteVarCol(define.condition, pattern_vars);
 
