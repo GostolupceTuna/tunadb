@@ -85,6 +85,8 @@ public:
 	RowsPerMatchType rows_per_match = RowsPerMatchType::ONE_ROW_PER_MATCH;
 	//! AFTER MATCH SKIP behavior
 	AfterMatchSkipType after_match_skip = AfterMatchSkipType::SKIP_PAST_LAST_ROW;
+	//! WITHIN time window
+	unique_ptr<ParsedExpression> within;
 	//! PATTERN text
 	string pattern;
 	//! DEFINE definitions

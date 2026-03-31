@@ -41,6 +41,11 @@ unique_ptr<TableRef> Transformer::TransformMatchRecognize(duckdb_libpgquery::PGM
 		}
 	}
 
+	// Transform WITHIN clause
+	if (root.within) {
+		result->within = TransformExpression(root.within);
+	}
+	
 	// Transform DEFINE clause — assigns boolean conditions to pattern variables
 	// Each definition is a ResTarget: name = variable name, val = condition expression
 	if (root.define) {
@@ -71,6 +76,11 @@ unique_ptr<TableRef> Transformer::TransformMatchRecognize(duckdb_libpgquery::PGM
 	// PATTERN — stored as a raw string, parsed later during NFA construction
 	if (root.pattern) {
 		result->pattern = root.pattern;
+	}
+
+	// set alias (if used)
+	if (root.alias) {
+		result->alias = TransformAlias(root.alias, result->column_name_alias);
 	}
 
 	return std::move(result);

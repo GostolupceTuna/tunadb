@@ -136,6 +136,7 @@ void BoundMatchRecognizeInfo::Serialize(Serializer &serializer) const {
 	serializer.WritePropertyWithDefault<vector<BoundMeasure>>(206, "measures", measures);
 	serializer.WritePropertyWithDefault<vector<string>>(207, "names", names);
 	serializer.WritePropertyWithDefault<vector<LogicalType>>(208, "types", types);
+	serializer.WritePropertyWithDefault<unique_ptr<Expression>>(209, "within", within);
 }
 
 BoundMatchRecognizeInfo BoundMatchRecognizeInfo::Deserialize(Deserializer &deserializer) {
@@ -149,6 +150,7 @@ BoundMatchRecognizeInfo BoundMatchRecognizeInfo::Deserialize(Deserializer &deser
 	deserializer.ReadPropertyWithDefault<vector<BoundMeasure>>(206, "measures", result.measures);
 	deserializer.ReadPropertyWithDefault<vector<string>>(207, "names", result.names);
 	deserializer.ReadPropertyWithDefault<vector<LogicalType>>(208, "types", result.types);
+	deserializer.ReadPropertyWithDefault<unique_ptr<Expression>>(209, "within", result.within);
 	return result;
 }
 
@@ -159,6 +161,7 @@ void BoundMeasure::Serialize(Serializer &serializer) const {
 	serializer.WriteProperty<LogicalType>(203, "input_type", input_type);
 	serializer.WritePropertyWithDefault<string>(204, "output_name", output_name);
 	serializer.WriteProperty<LogicalType>(205, "output_type", output_type);
+	serializer.WritePropertyWithDefault<idx_t>(206, "input_column_index", input_column_index);
 }
 
 BoundMeasure BoundMeasure::Deserialize(Deserializer &deserializer) {
@@ -169,6 +172,7 @@ BoundMeasure BoundMeasure::Deserialize(Deserializer &deserializer) {
 	auto output_name = deserializer.ReadPropertyWithDefault<string>(204, "output_name");
 	auto output_type = deserializer.ReadProperty<LogicalType>(205, "output_type");
 	BoundMeasure result(std::move(function_name), std::move(pattern_variable), std::move(input_column), std::move(input_type), std::move(output_name), std::move(output_type));
+	deserializer.ReadPropertyWithDefault<idx_t>(206, "input_column_index", result.input_column_index);
 	return result;
 }
 

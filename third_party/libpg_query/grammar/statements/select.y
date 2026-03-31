@@ -1123,9 +1123,7 @@ match_recognize_clause:
             n->skip_past_last_row = (skip == 0);
         }
 
-        // TODO: GRM5/TW1 parse and store WITHIN + structured MEASURES/DEFINE data.
-
-        n->within = nullptr;
+        n->within = (PGNode *) $8;
 
         n->pattern = $9;
         n->define = (PGList *) $10;
@@ -1253,18 +1251,18 @@ mr_agg_expr:
 					n->agg_star = true;
 					$$ = (PGNode *) n;
 				}
-			| COUNT_P '(' mr_value_ref ')'
+			| COUNT_P '(' ColId '.' '*' ')'
 				{
-					PGFuncCall *n = makeFuncCall(SystemFuncName("count"), list_make1($3), @1);
+					PGFuncCall *n = makeFuncCall(SystemFuncName("count"), list_make1(makeColumnRef($3, 
+						list_make1(makeString("*")), @3, yyscanner)), @1);
 					$$ = (PGNode *) n;
 				}
 ;
 
 mr_value_ref:
-			columnref_opt_indirection
+			ColId '.' ColId
 				{
-					// TODO: GRM5 restrict to var.col and support COUNT(var.*).
-					$$ = $1;
+					$$ = makeColumnRef($1, list_make1(makeString($3)), @1, yyscanner);
 				}
 ;
 
@@ -1284,12 +1282,18 @@ mr_skip_option:
 			| PAST LAST_P ROW 	{ $$ = 0; }	/* "LAST" is read as "LAST_P" smh, look at kwlist.hpp */
 ;
 
-/* change here for TW1 */
 mr_opt_within_clause:				
-			WITHIN
+			WITHIN Iconst opt_interval
 				{
-					// TODO: TW1 parse WITHIN time window expression.
-					$$ = nullptr;
+					$$ = makeIntervalNode($2, @2, $3);
+				}
+			| WITHIN Sconst
+				{
+					$$ = makeIntervalNode($2, @2, NIL);
+				}
+			| WITHIN a_expr
+				{
+					$$ = $2;
 				}
 			| /* EMPTY */
 				{
@@ -1490,10 +1494,11 @@ table_ref:	relation_expr opt_alias_clause opt_at_clause opt_tablesample_clause
 					n->location = @2;
 					$$ = (PGNode *) n;
 				}
-			| table_ref match_recognize_clause
+			| table_ref match_recognize_clause opt_alias_clause
 				{ 
 					PGMatchRecognize *mr = (PGMatchRecognize *) $2;
         			mr->source = $1;
+					mr->alias = $3;
 					$$ = (PGNode *) mr;
 				}
 		;
@@ -2424,7 +2429,7 @@ hour_keyword:
 	HOUR_P | HOURS_P
 
 minute_keyword:
-	MINUTE_P | MINUTES_P
+	MINUTE_P | MINUTES_P | MIN_P
 
 second_keyword:
 	SECOND_P | SECONDS_P

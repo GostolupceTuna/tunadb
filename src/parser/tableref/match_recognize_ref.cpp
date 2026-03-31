@@ -167,6 +167,9 @@ string MatchRecognizeRef::ToString() const {
 	             rows_per_match == RowsPerMatchType::ONE_ROW_PER_MATCH ? "ONE ROW PER MATCH" : "ALL ROWS PER MATCH");
 	AppendClause(result, has_clause, after_match_skip == AfterMatchSkipType::SKIP_TO_NEXT_ROW ? "AFTER MATCH SKIP TO NEXT ROW"
 	                                                                                           : "AFTER MATCH SKIP PAST LAST ROW");
+	if (within) {
+		AppendClause(result, has_clause, "WITHIN " + within->ToString());
+	}
 	if (!pattern.empty()) {
 		AppendClause(result, has_clause, "PATTERN ('" + StringUtil::Replace(pattern, "'", "''") + "')");
 	}
@@ -219,6 +222,9 @@ bool MatchRecognizeRef::Equals(const TableRef &other_p) const {
 			return false;
 		}
 	}
+	if (!ParsedExpression::Equals(within, other.within)) {
+		return false;
+	}
 
 	return rows_per_match == other.rows_per_match && after_match_skip == other.after_match_skip && pattern == other.pattern;
 }
@@ -237,6 +243,7 @@ unique_ptr<TableRef> MatchRecognizeRef::Copy() {
 	}
 	copy->rows_per_match = rows_per_match;  
 	copy->after_match_skip = after_match_skip;
+	copy->within = within ? within->Copy() : nullptr;
 	copy->pattern = pattern;
 	for (auto &entry : define) {
 		copy->define.push_back(entry.Copy());
